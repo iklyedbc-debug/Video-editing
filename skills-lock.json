@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "skills": {
+    "image-search": {
+      "source": "dstn2000/claude-web-image-search-skill",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "a5d85f10ee8e3b5f71a6ebbe65e1be369ca43dc92d3ae4dd81dd8ef63bb294d4"
+    }
+  }
+}
