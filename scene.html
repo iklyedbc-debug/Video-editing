@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>شفتاك وكأس الشاي</title>
+<style>
+@font-face{font-family:Cairo;src:url(fonts/cairo-arabic.woff2) format('woff2');font-weight:200 1000;unicode-range:U+0600-06FF,U+0750-077F,U+FB50-FDFF,U+FE70-FEFF,U+200C-200E;}
+@font-face{font-family:Cairo;src:url(fonts/cairo-latin.woff2) format('woff2');font-weight:200 1000;}
+html,body{margin:0;padding:0;background:#000;overflow:hidden}
+#stage{position:relative;width:720px;height:1280px;overflow:hidden;background:#000;font-family:Cairo,sans-serif;color:#fff}
+canvas{position:absolute;inset:0;width:720px;height:1280px}
+#hook{position:absolute;top:120px;left:40px;right:40px;text-align:center;font-weight:800;font-size:46px;line-height:1.35;
+  text-shadow:0 3px 14px rgba(0,0,0,.85),0 0 2px #000}
+#hook .y{color:#ffcc66}
+#meas{position:absolute;left:0;top:0;width:720px;height:1280px;pointer-events:none}
+#line{position:absolute;width:2px;background:rgba(255,255,255,.85);box-shadow:0 0 6px rgba(0,0,0,.6)}
+#line:before,#line:after{content:"";position:absolute;left:-9px;width:20px;height:2px;background:rgba(255,255,255,.85)}
+#line:before{top:0}#line:after{bottom:0}
+#lab{position:absolute;text-align:right;direction:rtl;text-shadow:0 2px 10px rgba(0,0,0,.9),0 0 2px #000}
+#num{white-space:nowrap;font-weight:800;font-size:58px;line-height:1.05;direction:ltr;unicode-bidi:plaintext;display:inline-block}
+#cnt{white-space:nowrap;font-weight:600;font-size:23px;opacity:.85;margin-top:2px}
+.tag{white-space:nowrap;font-weight:700;font-size:26px;line-height:1.35}
+#tTop{color:#ffb3a8}#tBot{color:#ffd28a}
+#end{position:absolute;left:36px;right:36px;top:0;bottom:0;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;opacity:0}
+#end .a{font-weight:700;font-size:38px;line-height:1.5;text-shadow:0 3px 16px #000}
+#end .b{font-weight:900;font-size:58px;line-height:1.35;color:#ffcc66;margin-top:18px;text-shadow:0 4px 20px #000}
+#end .c{font-weight:600;font-size:28px;margin-top:30px;opacity:.9}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="gl" width="432" height="768"></canvas>
+  <div id="meas">
+    <div id="line"></div>
+    <div id="lab">
+      <div id="num"></div>
+      <div id="cnt"></div>
+      <div class="tag" id="tTop"></div>
+      <div class="tag" id="tBot"></div>
+    </div>
+  </div>
+  <div id="hook">إلى أي حد يمكن أن تقترب<br>شفتاك من <span class="y">كأس الشاي</span>؟</div>
+  <div id="end">
+    <div class="a">هنا تتوقف الرحلة…<br>الإلكترونات تتنافر<br>ولا تسمح لك بالاقتراب أكثر</div>
+    <div class="b">شفتاك لم تلمسا<br>كأس الشاي… أبداً ☕</div>
+    <div class="c">أرسلها لأكثر شخص يحب الشاي</div>
+  </div>
+</div>
+<script>
+// ---------- timeline ----------
+const FPS = 24, DUR = 27, NFRAMES = FPS * DUR;
+const LMAX = 26;               // number of halvings
+const ZSTART = 0.6, ZEND = 23.0; // seconds where zoom runs
+function levelAt(sec){
+  if (sec <= ZSTART) return 0;
+  if (sec >= ZEND) return LMAX;
+  const u = (sec - ZSTART) / (ZEND - ZSTART);
+  // gentle ease-in at start, ease-out at the very end
+  const e = u < 0.06 ? (u*u/0.12) : (u > 0.96 ? 1 - (1-u)*(1-u)/0.08 : u);
+  const a = 0.06*0.06/0.12, b = 1 - 0.04*0.04/0.08;
+  let v;
+  if (u < 0.06) v = e;
+  else if (u > 0.96) v = e;
+  else v = a + (u - 0.06) * (b - a) / 0.9;
+  return v * LMAX;
+}
+
+// groups: [startLevel, label]
+const TOP = [[0,'شفتاك'],[3,'تشققات الشفاه'],[6,'خلايا جلد ميتة'],[9,'سطح خلية واحدة'],[12,'ألياف الكيراتين'],[15,'دهون الشفاه'],[18,'سلاسل البروتين'],[21,'ذرات الكربون']];
+const BOT = [[0,'حافة كأس الشاي'],[2,'زجاج يبدو أملس'],[5,'خدوش لا تراها العين'],[9,'بقايا سكر الشاي'],[12,'طبقة من بخار الشاي'],[15,'جزيئات الماء'],[18,'شبكة الزجاج (السيليكا)'],[21,'ذرات السيليكون والأكسجين']];
+// shader groups (visual) : top 8, bottom 8 (bottom group 0 & 1 share glass pattern)
+const TSTART = [0,3,6,9,12,15,18,22];
+const BSTART = [0,2,5,9,12,15,18,22];
+const TREF = [0.3,4.5,7.5,10.5,13.5,16.5,19.5,25.3];
+const BREF = [0,3.5,6.5,10.5,13.5,16.5,19.5,25.3];
+
+function labelFor(list, n){ let s = list[0][1]; for (const [k,l] of list) if (n >= k) s = l; return s; }
+function fmtDist(n){
+  const m = 0.03 / Math.pow(2, n); // metres
+  const sig = v => v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
+  if (m >= 0.01) return sig(m*100) + ' سم';
+  if (m >= 0.001) return sig(m*1000) + ' مم';
+  if (m >= 1e-6) return sig(m*1e6) + ' ميكرون';
+  return sig(m*1e9) + ' نانومتر';
+}
+function countText(n){
+  if (n === 0) return 'المسافة الأصلية';
+  if (n === 1) return 'نُصّفت مرة واحدة';
+  if (n === 2) return 'نُصّفت مرتين';
+  if (n <= 10) return 'نُصّفت ' + n + ' مرات';
+  return 'نُصّفت ' + n + ' مرة';
+}
+
+// ---------- WebGL ----------
+const cv = document.getElementById('gl');
+const gl = cv.getContext('webgl', {preserveDrawingBuffer:true, antialias:false});
+const VS = `attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}`;
+const FS = `
+precision highp float;
+uniform vec2 R; uniform float uT; uniform float uL;
+uniform float wT[8]; uniform float sT[8];
+uniform float wB[8]; uniform float sB[8];
+uniform float uMacro;
+const float F = 1.55; const float Z0 = 2.6; const float HMAX = 0.34;
+
+float h1(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+vec2 h2(vec2 p){float a=h1(p);return vec2(a,h1(p+a+17.7));}
+float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+ return mix(mix(h1(i),h1(i+vec2(1,0)),f.x),mix(h1(i+vec2(0,1)),h1(i+vec2(1,1)),f.x),f.y);}
+float fbm(vec2 p){float s=0.,a=.5;for(int i=0;i<4;i++){s+=a*vn(p);p=mat2(1.6,1.2,-1.2,1.6)*p;a*=.5;}return s;}
+// voronoi: returns F1,F2 and nearest cell id + offset
+vec4 vor(vec2 p, out vec2 cid){vec2 i=floor(p),f=fract(p);float d1=8.,d2=8.;vec2 o1=vec2(0);cid=vec2(0);
+ for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){vec2 g=vec2(x,y);vec2 o=h2(i+g);vec2 r=g+o-f;float d=dot(r,r);
+  if(d<d1){d2=d1;d1=d;o1=r;cid=i+g;}else if(d<d2){d2=d;}}
+ return vec4(sqrt(d1),sqrt(d2),o1);}
+float sph(float d,float r){return sqrt(max(r*r-d*d,0.))/r;}
+
+// ---- TOP patterns: return vec4(height 0..1, rgb)
+vec4 pT(int g, vec2 q){
+ vec2 id;
+ if(g==0){ float r=.5+.5*sin(q.x*6.2832+vn(q*vec2(.6,.25))*4.); float h=pow(r,2.5)*.55+fbm(q*2.)*.3;
+   return vec4(h, mix(vec3(.55,.12,.16),vec3(.86,.38,.40),h)); }
+ if(g==1){ vec4 v=vor(q,id); float e=smoothstep(0.,.09,v.y-v.x); float h=.25+.45*e+.12*h1(id)+fbm(q*3.)*.15;
+   return vec4(h, mix(vec3(.45,.12,.14),vec3(.92,.52,.50),e*.8+.2*h1(id))); }
+ if(g==2){ vec4 v=vor(q,id); float e=1.-smoothstep(0.,.05,v.y-v.x); float h=.3+.35*e+.18*h1(id)+fbm(q*4.)*.1;
+   return vec4(h, mix(vec3(.88,.58,.50),vec3(.98,.80,.70),e)); }
+ if(g==3){ float h=fbm(q*1.3)*.8+.25*sph(vor(q*2.,id).x,.45);
+   return vec4(h, mix(vec3(.85,.58,.50),vec3(.99,.82,.72),h)); }
+ if(g==4){ float w=q.y+.35*vn(q*vec2(.25,.8))+.15*vn(q*3.); float r=.5+.5*sin(w*6.2832*1.3); float h=pow(r,1.6)*.75+fbm(q*vec2(1.,4.))*.2;
+   return vec4(h, mix(vec3(.80,.62,.52),vec3(1.,.90,.80),r)); }
+ if(g==5){ vec4 v=vor(q,id); float rr=.32+.16*h1(id); float h=sph(v.x,rr)*.85;
+   return vec4(h, mix(vec3(.55,.40,.20),vec3(1.,.86,.50),h)); }
+ if(g==6){ float n=fbm(q*.9); float h=pow(1.-abs(n*2.-1.),5.)*.8+fbm(q*3.)*.15;
+   return vec4(h, mix(vec3(.40,.28,.40),vec3(.95,.78,.86),h)); }
+ // atoms
+ vec4 v=vor(q,id); float k=h1(id+3.1); float rr=k<.5?.46:(k<.8?.36:.42); float h=sph(v.x,rr);
+ vec3 c=k<.5?vec3(.22,.22,.24):(k<.8?vec3(.95,.95,.97):(k<.92?vec3(.85,.15,.12):vec3(.20,.35,.95)));
+ return vec4(h, c*(.35+.65*h));
+}
+// ---- BOTTOM patterns
+vec4 pB(int g, vec2 q){
+ vec2 id;
+ if(g<=1){ float h=.08*fbm(q*.7)+.02*fbm(q*6.);
+   return vec4(h, vec3(.55,.28,.08)+.10*fbm(q*.3)); }            // tea-tinted glass
+ if(g==2){ float s=0.; for(int i=0;i<3;i++){ float a=float(i)*2.1+.4; vec2 d=vec2(cos(a),sin(a));
+     float t=dot(q,d)*1.7+float(i)*.37; float li=floor(t); float keep=step(.55,h1(vec2(li,float(i))));
+     s+=keep*(1.-smoothstep(0.,.05+.04*h1(vec2(li,9.)),abs(fract(t)-.5))); }
+   float h=.45-.35*min(s,1.)+.05*fbm(q*2.);
+   return vec4(h, mix(vec3(.30,.14,.05),vec3(.62,.38,.18),h*1.6)); }
+ if(g==3){ vec4 v=vor(q*.9,id); float k=h1(id); float a=k*6.28; vec2 o=mat2(cos(a),sin(a),-sin(a),cos(a))*v.zw;
+   float b=max(abs(o.x),abs(o.y)); float sz=.18+.17*h1(id+5.); float c=(k>.35)?1.-smoothstep(sz-.03,sz,b):0.;
+   float h=.1+.6*c*(1.-.4*abs(o.x+o.y)/sz)+.05*fbm(q*2.);
+   return vec4(h, mix(vec3(.40,.20,.07),vec3(.97,.95,.90),c)); }
+ if(g==4){ float n=fbm(q*.55); float h=.15+.6*smoothstep(.35,.75,n);
+   return vec4(h, mix(vec3(.35,.22,.12),vec3(.60,.78,.92),smoothstep(.35,.7,n))); }
+ if(g==5){ vec4 v=vor(q,id); float a=h1(id)*6.28; vec2 p=v.zw;   // water molecule: O + 2H
+   vec2 d1=vec2(cos(a),sin(a))*.30, d2=vec2(cos(a+1.82),sin(a+1.82))*.30;
+   float ho=sph(length(p),.28), ha=sph(length(p+d1),.17)*.75, hb=sph(length(p+d2),.17)*.75;
+   float h=max(ho,max(ha,hb)); vec3 c=ho>=max(ha,hb)?vec3(.90,.16,.12):vec3(.96,.96,.98);
+   return vec4(h*.9, c*(.35+.65*h)); }
+ if(g==6){ vec4 v=vor(q,id); float rr=.30+.17*h1(id+2.); float h=sph(v.x,rr);
+   return vec4(h*.9, mix(vec3(.25,.28,.36),vec3(.78,.82,.92),h)); }
+ vec4 v=vor(q,id); float k=h1(id+7.3); float rr=k<.4?.47:.36; float h=sph(v.x,rr);
+ vec3 c=k<.4?vec3(.92,.74,.30):vec3(.88,.16,.12);
+ return vec4(h, c*(.35+.65*h));
+}
+
+vec2 drift(int g){ return vec2(.06*uT, .02*uT); }
+
+vec4 topS(vec2 p){
+ vec2 c=p-vec2(0.,Z0); float H=0.; vec3 col=vec3(0.); float W=0.;
+ for(int i=0;i<8;i++){ if(wT[i]>.002){ float S=sT[i]; vec4 r=pT(i, c/S+vec2(float(i)*13.1,0.)+drift(i));
+   float amp=clamp(.38*S,0.,.27); H+=wT[i]*amp*r.x; col+=wT[i]*r.yzw; W+=wT[i]; } }
+ // macro: lower lip edge (rounded ridge along x)
+ if(uMacro>.001){ vec2 m=c/exp2(uL); H+=uMacro*.17*exp(-m.y*m.y/1.2)*exp(-m.x*m.x/30.); }
+ return vec4(min(H,HMAX), col/max(W,1e-3));
+}
+vec4 botS(vec2 p){
+ vec2 c=p-vec2(0.,Z0); float H=0.; vec3 col=vec3(0.); float W=0.;
+ for(int i=0;i<8;i++){ if(wB[i]>.002){ float S=sB[i]; vec4 r=pB(i, c/S+vec2(float(i)*7.7,3.)+drift(i));
+   float amp=clamp(.38*S,0.,.27); H+=wB[i]*amp*r.x; col+=wB[i]*r.yzw; W+=wB[i]; } }
+ if(uMacro>.001){ vec2 m=c/exp2(uL); H+=uMacro*.15*exp(-m.y*m.y/.8); }
+ return vec4(min(H,HMAX), col/max(W,1e-3));
+}
+float topH(vec2 p){return topS(p).x;}
+float botH(vec2 p){return botS(p).x;}
+
+vec3 shade(vec3 pos, vec3 n, vec3 alb, vec3 rd, bool top, float gloss){
+ vec3 L1 = top? normalize(vec3(.75,-.45,-.5)) : normalize(vec3(-.7,.5,-.5));
+ vec3 L2 = top? normalize(vec3(-.6,-.3,-.7)) : normalize(vec3(.6,.25,-.7));
+ float d1=max(dot(n,L1),0.), d2=max(dot(n,L2),0.);
+ vec3 hlf=normalize(L1-rd); float sp=pow(max(dot(n,hlf),0.),mix(18.,90.,gloss))*mix(.25,1.4,gloss);
+ float fr=pow(1.-max(dot(n,-rd),0.),4.);
+ vec3 key = top? vec3(1.,.93,.85) : vec3(1.,.90,.75);
+ vec3 rf=reflect(rd,n);
+ float soft=pow(max(dot(rf,normalize(vec3(.35,top?-.5:.5,.8))),0.),30.)*1.6+pow(max(dot(rf,normalize(vec3(-.5,top?-.4:.4,.75))),0.),60.)*1.1;
+ vec3 envc=vec3(1.,.92,.8)*soft + vec3(.9,.55,.2)*.25*(.5+.5*rf.x);
+ vec3 c = alb*(.10 + 1.05*d1*key + .35*d2*vec3(.75,.85,1.)) + sp*key + fr*gloss*vec3(.9,.7,.45)*.6 + envc*gloss*gloss*(.6+1.5*fr);
+ return c;
+}
+
+void main(){
+ vec2 uv=(gl_FragCoord.xy-.5*R)/R.y*2.;   // y in [-1,1]
+ vec3 ro=vec3(.04*sin(uT*.4),0.,0.);
+ vec3 rd=normalize(vec3(uv.x,uv.y,F));
+ vec3 col=vec3(0.);
+ bool top = rd.y>0.;
+ float ay=abs(rd.y);
+ if(ay>.004){
+   float t0=(1.-HMAX)/ay, t1=1./ay; t1=min(t1,70.); t0=min(t0,t1);
+   float prevT=t0, prevF=-1.; float th=t1; bool hit=false;
+   const int N=18;
+   for(int i=0;i<=N;i++){
+     float t=mix(t0,t1,float(i)/float(N));
+     vec3 p=ro+rd*t; float h= top? topH(p.xz):botH(p.xz);
+     float f= ay*t-(1.-h);
+     if(f>=0.){ // refine
+       float a=prevT,b=t;
+       for(int k=0;k<4;k++){ float m=.5*(a+b); vec3 pm=ro+rd*m; float hm= top?topH(pm.xz):botH(pm.xz);
+         if(ay*m-(1.-hm)>=0.) b=m; else a=m; }
+       th=b; hit=true; break; }
+     prevT=t;
+   }
+   if(hit){
+     vec3 p=ro+rd*th; float e=.0025*max(th,1.);
+     vec4 s = top? topS(p.xz):botS(p.xz);
+     float hx = (top? topH(p.xz+vec2(e,0.)):botH(p.xz+vec2(e,0.)))-s.x;
+     float hz = (top? topH(p.xz+vec2(0.,e)):botH(p.xz+vec2(0.,e)))-s.x;
+     vec3 n = top? normalize(vec3(-hx/e,-1.,-hz/e)) : normalize(vec3(-hx/e,1.,-hz/e));
+     float gloss = top? .25 : 0.;
+     if(!top){ float g=wB[0]+wB[1]; gloss = .25+.75*clamp(g+wB[4]*.9,0.,1.); }
+     if(top){ gloss = .25 + .45*wT[0] + .35*wT[5]; }
+     col = shade(p,n,s.yzw,rd,top,gloss);
+     float ao = .55+.45*smoothstep(0.,HMAX*.8,s.x);
+     col*=ao;
+     float fog = exp(-.16*max(th-1.2,0.));
+     col*=fog;
+   }
+ }
+ // vignette + grade
+ float vg = 1.-.35*dot(uv*vec2(.9,.55),uv*vec2(.9,.55));
+ col*=vg;
+ col = col/(1.+col*.35);
+ col = pow(col, vec3(.92));
+ col += (h1(gl_FragCoord.xy+fract(uT*7.)*91.)-.5)*.025;
+ gl_FragColor=vec4(col,1.);
+}`;
+function sh(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));return s;}
+const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,VS));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,FS));gl.linkProgram(pr);
+if(!gl.getProgramParameter(pr,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(pr));
+gl.useProgram(pr);
+const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+const la=gl.getAttribLocation(pr,'a');gl.enableVertexAttribArray(la);gl.vertexAttribPointer(la,2,gl.FLOAT,false,0,0);
+const U=n=>gl.getUniformLocation(pr,n);
+const uR=U('R'),uTl=U('uT'),uLl=U('uL'),uwT=U('wT'),usT=U('sT'),uwB=U('wB'),usB=U('sB'),uMac=U('uMacro');
+
+function weights(starts, L, refs){
+  const w=[],s=[];
+  for(let i=0;i<starts.length;i++){
+    const a=starts[i], b= i+1<starts.length? starts[i+1] : 99;
+    // fade in over [a-1.2, a+0.3], fade out over [b+0.4, b+2.0]
+    const sm=(e0,e1,x)=>{const t=Math.min(1,Math.max(0,(x-e0)/(e1-e0)));return t*t*(3-2*t);};
+    let win = (i===0?1:sm(a-0.8,a+0.2,L)) * (1-sm(b-0.2,b+0.9,L));
+    w.push(win);
+    s.push(0.42*Math.pow(2, L-refs[i]));   // feature size in camera units
+  }
+  return [w,s];
+}
+
+// ---------- overlay ----------
+const $=id=>document.getElementById(id);
+const F_=1.55, Z0_=2.6;
+function renderFrame(fr){
+  const sec = fr / FPS;
+  const L = levelAt(sec);
+  const [wt,st]=weights(TSTART,L,TREF), [wb,sb]=weights(BSTART,L,BREF);
+  gl.viewport(0,0,432,768);
+  gl.uniform2f(uR,432,768); gl.uniform1f(uTl,sec); gl.uniform1f(uLl,L);
+  gl.uniform1fv(uwT,wt); gl.uniform1fv(usT,st); gl.uniform1fv(uwB,wb); gl.uniform1fv(usB,sb);
+  gl.uniform1f(uMac, Math.max(0, 1 - L/2.5));
+  gl.drawArrays(gl.TRIANGLES,0,3);
+
+  // measurement line at screen x = 50%, spanning surfaces at depth Z0
+  const yOff = (F_/Z0_)*(1-0.13) * 640;   // px from centre
+  const line=$('line'); const x=470;
+  line.style.left=x+'px'; line.style.top=(640-yOff)+'px'; line.style.height=(2*yOff)+'px';
+  const n = Math.min(LMAX, Math.floor(L+1e-6));
+  $('num').textContent = fmtDist(n);
+  $('cnt').textContent = countText(n);
+  $('tTop').textContent = '▲ ' + labelFor(TOP,n);
+  $('tBot').textContent = '▼ ' + labelFor(BOT,n);
+  const lab=$('lab'); lab.style.right=(720-x+18)+'px'; lab.style.top=(640-78)+'px';
+  // pop on change
+  const frac = L - n; const pop = sec>ZSTART && sec<ZEND+0.2 ? Math.max(0,1-frac*6) : 0;
+  $('num').style.transform='scale('+(1+0.08*pop)+')';
+  $('num').style.transformOrigin='right center';
+
+  const hookA = sec<3.2 ? 1 : Math.max(0,1-(sec-3.2)/0.5);
+  $('hook').style.opacity = hookA;
+  const endA = Math.min(1,Math.max(0,(sec-23.6)/0.8));
+  $('end').style.opacity = endA;
+  $('meas').style.opacity = 1-endA;
+  gl.canvas.style.filter = 'brightness('+(1-endA*0.7)+') blur('+(endA*4)+'px)';
+  gl.finish();
+  return true;
+}
+window.renderFrame=renderFrame; window.NFRAMES=NFRAMES;
+document.fonts.ready.then(()=>{ renderFrame(0); window.ready=true; });
+</script>
+</body>
+</html>
