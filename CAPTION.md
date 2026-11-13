@@ -13,3 +13,6 @@
 **أسئلة للتعليقات (تزيد التفاعل):**
 - شاي ولا قهوة؟ ☕
 - كم تنصيف تتوقع حتى نوصل للذرات؟
+
+## Credits
+Intro footage: "Close up of a woman blowing on coffee" (clip 43268) from Mixkit, free under the Mixkit Stock Video Free License — https://mixkit.co/free-stock-video/close-up-of-a-woman-blowing-on-coffee-43268/
