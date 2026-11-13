@@ -9,7 +9,7 @@ const fs = require('fs');
   const page = await browser.newPage({ viewport: { width: 720, height: 1280 }, deviceScaleFactor: 1 });
   page.on('pageerror', e => console.error('PAGE ERROR', e.message));
   page.on('console', m => console.log('console:', m.text()));
-  await page.goto('file://' + path.resolve(__dirname, 'scene.html'));
+  await page.goto('file://' + path.resolve(__dirname, process.env.PAGE || 'scene.html'));
   await page.waitForFunction('window.ready === true', null, { timeout: 120000 });
   const total = await page.evaluate('window.NFRAMES');
   const start = +(process.argv[3] || 0), end = +(process.argv[4] || total), step = +(process.argv[5] || 1);
