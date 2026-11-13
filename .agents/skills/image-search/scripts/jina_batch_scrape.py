@@ -38,9 +38,12 @@ def extract_images_from_markdown(markdown_content):
         if any(size in url for size in ['s16-', 's20-', 's32-', 's48-', 's64-', 'w=16', 'w=20', 'w=32', 'w=48', 'w=64']):
             continue
 
-        # Focus on larger images (screenshots, photos, content images)
-        # Common screenshot/content sizes: 240+, 300+, 526+, 600+, etc.
-        if any(indicator in url for indicator in ['w526', 'w600', 'w648', 'w240', 'w300', 'w3000', 'hq', 'h296', 'h364', 'h480']):
+        # Skip inline data URIs and vector icons/logos
+        path = url.split('?', 1)[0].lower()
+        if url.startswith('data:') or path.endswith('.svg'):
+            continue
+
+        if not any(img["url"] == url for img in images):
             images.append({
                 "alt": alt_text.strip() if alt_text else "Image",
                 "url": url
