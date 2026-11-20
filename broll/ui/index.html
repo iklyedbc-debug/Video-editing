@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B-roll Picker</title>
+<style>
+  :root { --bg:#0e0f13; --card:#171920; --line:#2a2d38; --ink:#f2f3f7; --mute:#9095a5; --acc:#ffcc33; --acc2:#7c5cff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1120px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 16px; }
+  h2 { font-size: 16px; margin: 28px 0 10px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  input[type=url] { flex:1 1 320px; min-width:0; background:var(--card); border:1px solid var(--line); color:var(--ink); border-radius:10px; padding:12px 14px; font-size:15px; }
+  button { background:var(--acc); color:#111; border:0; border-radius:10px; padding:12px 18px; font-weight:700; cursor:pointer; font-size:15px; }
+  button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
+  .toggle { display:flex; align-items:center; gap:10px; margin-top:18px; padding:14px; background:var(--card); border:1px solid var(--line); border-radius:12px; }
+  .toggle input { width:20px; height:20px; accent-color: var(--acc); }
+  .toggle small { color:var(--mute); display:block; }
+  #opts[hidden] { display:none; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:12px; }
+  .style { background:var(--card); border:2px solid var(--line); border-radius:12px; overflow:hidden; cursor:pointer; text-align:left; padding:0; color:var(--ink); font-weight:400; }
+  .style[aria-pressed=true] { border-color: var(--acc); box-shadow: 0 0 0 3px #ffcc3333; }
+  .style .pv { aspect-ratio: 9 / 8; background:#000; position:relative; }
+  .style iframe { position:absolute; inset:0; width:100%; height:100%; border:0; pointer-events:none; }
+  .style .meta { padding:10px 12px; }
+  .style b { display:block; font-size:14px; }
+  .style span { color:var(--mute); font-size:12.5px; }
+  .seg { display:inline-flex; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:3px; flex-wrap:wrap; }
+  .seg button { background:transparent; color:var(--mute); padding:8px 14px; font-weight:600; }
+  .seg button[aria-pressed=true] { background:var(--line); color:var(--ink); }
+  .hint { color:var(--mute); font-size:13px; margin-top:6px; }
+  .clip { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; display:grid; grid-template-columns: 1fr 260px; gap:14px; }
+  @media (max-width: 720px) { .clip { grid-template-columns: 1fr; } }
+  .clip h3 { margin:0 0 4px; font-size:15px; }
+  .bar { position:relative; height:34px; background:#0b0c10; border-radius:8px; margin:10px 0; overflow:hidden; }
+  .mark { position:absolute; top:4px; bottom:4px; border-radius:6px; background:var(--acc2); border:0; padding:0; cursor:pointer; }
+  .mark:hover, .mark.on { background: var(--acc); }
+  .cues { list-style:none; margin:0; padding:0; font-size:13px; }
+  .cues li { padding:6px 0; border-top:1px solid var(--line); display:flex; gap:10px; cursor:pointer; }
+  .cues code { color:var(--acc); min-width:86px; }
+  .cues .tpl { color:var(--mute); min-width:64px; }
+  .player { aspect-ratio: 9/8; background:#000; border-radius:10px; overflow:hidden; }
+  .player iframe { width:100%; height:100%; border:0; }
+  pre { background:#0b0c10; border:1px solid var(--line); border-radius:10px; padding:12px; overflow:auto; font-size:12.5px; color:#cfd3dd; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Generate clips</h1>
+  <div class="row">
+    <input id="url" type="url" placeholder="Paste a YouTube / video link" value="https://www.youtube.com/watch?v=example">
+    <button id="go">Get clips</button>
+  </div>
+
+  <label class="toggle">
+    <input id="broll" type="checkbox" checked>
+    <div><b>Animated B-roll</b><small>Adds animated explainers (stats, comparisons, steps…) at the right moments of each talking-head clip.</small></div>
+  </label>
+
+  <section id="opts">
+    <h2>Animation style</h2>
+    <div class="grid" id="styles"></div>
+    <h2>Layout</h2>
+    <div class="seg" id="layouts"></div>
+    <div class="hint" id="layoutHint"></div>
+  </section>
+
+  <h2>Request sent to the backend</h2>
+  <pre id="payload"></pre>
+
+  <section id="results" hidden>
+    <h2>Clips with B-roll</h2>
+    <div id="clips"></div>
+  </section>
+</main>
+<script>
+// Same catalogue as broll_studio/styles.py (served by GET /broll/styles when the API runs).
+let STYLES = [
+  ["9-bit-quest", "9-Bit Quest", "Retro RPG pixels"], ["chalk-doodle", "Chalk Doodle", "Chalk on a slate board"],
+  ["golden-neon", "Golden Neon", "Flickering gold neon"], ["retro-console", "Retro Console", "Green CRT terminal"],
+  ["pop-comic", "Pop Comic", "POW bursts & halftone"], ["flat-poster", "Flat Poster", "Bold flat colour"],
+  ["line-diagram", "Line Diagram", "Technical line art"], ["cinematic-3d", "Cinematic 3D", "Extruded gold, light beams"],
+  ["toy-bricks", "Toy Bricks", "Built from plastic bricks"], ["soft-3d", "Soft 3D", "Pastel clay, springy"],
+  ["paper-cutout", "Paper Cutout", "Stop-motion paper (bonus)"], ["glitch-hype", "Glitch Hype", "RGB glitch (bonus)"],
+].map(([id, name, tagline]) => ({ id, name, tagline }));
+const LAYOUTS = { split: "B-roll on top, speaker below — the classic viral look", full: "Full-screen cutaway, voice continues", pip: "Rounded card pops in over the speaker" };
+const ENGINE = '../engine/broll.html';
+const state = { style: 'pop-comic', layout: 'split' };
+try { Object.assign(state, JSON.parse(localStorage.getItem('broll-pick') || '{}')); } catch (e) {}
+
+function save() { try { localStorage.setItem('broll-pick', JSON.stringify(state)); } catch (e) {} showPayload(); }
+function showPayload() {
+  const on = document.getElementById('broll').checked;
+  document.getElementById('payload').textContent = JSON.stringify({ url: document.getElementById('url').value, broll: on ? { enabled: true, style: state.style, layout: state.layout } : { enabled: false } }, null, 2);
+}
+
+function renderStyles() {
+  const g = document.getElementById('styles'); g.innerHTML = '';
+  STYLES.forEach((s, i) => {
+    const b = document.createElement('button'); b.className = 'style'; b.setAttribute('aria-pressed', s.id === state.style);
+    b.innerHTML = `<div class="pv"><iframe loading="lazy" title="${s.name} preview" src="${ENGINE}?preview=${s.id}&w=540&h=480&cue=${i % 6}"></iframe></div><div class="meta"><b>${s.name}</b><span>${s.tagline}</span></div>`;
+    b.onclick = () => { state.style = s.id; g.querySelectorAll('.style').forEach(x => x.setAttribute('aria-pressed', x === b)); save(); };
+    g.appendChild(b);
+  });
+}
+function renderLayouts() {
+  const seg = document.getElementById('layouts'); seg.innerHTML = '';
+  Object.keys(LAYOUTS).forEach(k => {
+    const b = document.createElement('button'); b.textContent = { split: 'Split', full: 'Full screen', pip: 'Card' }[k]; b.setAttribute('aria-pressed', k === state.layout);
+    b.onclick = () => { state.layout = k; renderLayouts(); save(); };
+    seg.appendChild(b);
+  });
+  document.getElementById('layoutHint').textContent = LAYOUTS[state.layout];
+}
+document.getElementById('broll').onchange = e => { document.getElementById('opts').hidden = !e.target.checked; showPayload(); };
+document.getElementById('url').oninput = showPayload;
+
+// ---- results: every clip lists the B-roll used, at its time, in the chosen style
+function renderResults(clips) {
+  const box = document.getElementById('clips'); box.innerHTML = '';
+  clips.forEach((c, ci) => {
+    const el = document.createElement('div'); el.className = 'clip';
+    const fmt = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
+    el.innerHTML = `<div><h3>${c.title}</h3><div class="hint">${c.duration.toFixed(0)} s · ${c.cues.length} B-roll · ${STYLES.find(s => s.id === c.style)?.name || c.style}</div>
+      <div class="bar">${c.cues.map((q, i) => `<button class="mark" data-i="${i}" title="${q.template}" style="left:${q.start / c.duration * 100}%;width:${(q.end - q.start) / c.duration * 100}%"></button>`).join('')}</div>
+      <ul class="cues">${c.cues.map((q, i) => `<li data-i="${i}"><code>${fmt(q.start)}–${fmt(q.end)}</code><span class="tpl">${q.template}</span><span>${q.value ? q.value + ' · ' : ''}${q.title || (q.left ? q.left.label + ' vs ' + q.right.label : '') || (q.items || []).map(x => x.label).join(' → ')}</span></li>`).join('')}</ul></div>
+      <div class="player"><iframe title="B-roll preview" src="${ENGINE}"></iframe></div>`;
+    box.appendChild(el);
+    const fr = el.querySelector('iframe');
+    const play = i => { el.querySelectorAll('.mark').forEach(m => m.classList.toggle('on', +m.dataset.i === i)); fr.contentWindow.postMessage({ type: 'broll-play', style: c.style, layout: 'split', cue: c.cues[i], w: 540, h: 480 }, '*'); };
+    el.querySelectorAll('[data-i]').forEach(n => n.onclick = () => play(+n.dataset.i));
+    fr.onload = () => setTimeout(() => play(0), 300);
+  });
+  document.getElementById('results').hidden = false;
+}
+
+document.getElementById('go').onclick = async () => {
+  // In the studio this posts the link to the clipping job; each clip then runs POST /broll/apply.
+  // Demo data in the shape /broll/plan returns:
+  const st = state.style;
+  renderResults([
+    { title: 'Clip 1 — "Why 73% of people stay broke"', duration: 38, style: st, cues: [
+      { start: 3.1, end: 6.1, template: 'stat', value: '73%', title: 'live paycheck to paycheck', icon: 'wallet' },
+      { start: 12.4, end: 15.4, template: 'compare', title: 'Where the money goes', left: { label: 'New car', icon: 'car' }, right: { label: 'Index fund', icon: 'trending-up' }, winner: 'right' },
+      { start: 24.0, end: 27.2, template: 'steps', title: 'The fix', items: [{ label: 'Budget', icon: 'calculator' }, { label: 'Save', icon: 'piggy-bank' }, { label: 'Invest', icon: 'chart-line' }] },
+      { start: 33.0, end: 35.6, template: 'keyword', title: 'Start today', icon: 'flame' } ] },
+    { title: 'Clip 2 — "كيفاش تبدا مشروعك"', duration: 29, style: st, cues: [
+      { start: 2.6, end: 5.6, template: 'concept', title: 'فكرة بسيطة', subtitle: 'تحل مشكلة حقيقية', icon: 'lightbulb' },
+      { start: 14.0, end: 17.0, template: 'trend', direction: 'up', value: '3x', title: 'المبيعات في عام' } ] },
+  ]);
+};
+
+fetch('/broll/styles').then(r => r.ok ? r.json() : null).then(j => { if (j) { STYLES = j.styles; renderStyles(); } }).catch(() => {});
+renderStyles(); renderLayouts(); showPayload();
+</script>
+</body>
+</html>

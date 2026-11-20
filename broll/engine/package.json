@@ -1,0 +1,7 @@
+{
+  "name": "broll-engine",
+  "private": true,
+  "type": "module",
+  "description": "Canvas B-roll renderer: node render_cues.mjs job.json",
+  "dependencies": { "playwright": "^1.48.0" }
+}

@@ -1,0 +1,122 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>B-roll engine</title>
+<link rel="stylesheet" href="assets/fonts.css">
+<style>
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  canvas { display: block; }
+  body.preview { background: #000; display: grid; place-items: center; height: 100vh; }
+  body.preview canvas { max-width: 100vw; max-height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="assets/icons.js"></script>
+<script src="js/core.js"></script>
+<script src="js/templates.js"></script>
+<script src="js/styles/all.js"></script>
+<script>
+(function () {
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  let ST = null, CUE = null, SEED = 1, LAYOUT = 'split', W = 1080, H = 960;
+
+  // Fonts: force-load every family once so the first frame is never in a fallback face.
+  const FAMS = ['Press Start 2P', 'VT323', 'Bangers', 'Anton', '700 Cabin Sketch', 'Tilt Neon', '700 Fredoka', '400 Fredoka',
+    '400 IBM Plex Mono', '700 IBM Plex Mono', 'Bebas Neue', '700 Space Mono', 'Permanent Marker', '700 Cairo', '900 Cairo'];
+  const fontsReady = Promise.all(FAMS.flatMap(f => {
+    const fam = f.replace(/^\d+ /, ''), w = (f.match(/^\d+/) || ['400'])[0];
+    return [document.fonts.load(`${w} 40px "${fam}"`, 'Aa1'), document.fonts.load(`${w} 40px "${fam}"`, 'عربي')];
+  })).catch(() => {});
+
+  function setup(o) {
+    ST = BR.STYLES[o.style] || BR.STYLES['flat-poster'];
+    CUE = o.cue || {}; SEED = o.seed || 1; LAYOUT = o.layout || 'split';
+    W = o.W || 1080; H = o.H || 960;
+    cv.width = W; cv.height = H;
+    return { fps: ST.fps || 30, style: ST.id };
+  }
+
+  function draw(t) {
+    const D = Math.max(0.5, (CUE.end ?? 3) - (CUE.start ?? 0));
+    const fps = ST.fps || 30;
+    const tq = ST.stepFps ? Math.floor(t * ST.stepFps) / ST.stepFps : t; // stop-motion styles hold frames
+    const px = ST.pixel ? Math.max(2, Math.round(Math.min(W, H) / ST.pixel)) : 0; // ST.pixel = low-res short side
+    const w = px ? Math.round(W / px) : W, h = px ? Math.round(H / px) : H;
+    const u = Math.min(w, h) / 100;
+    const S = {
+      W: w, H: h, u, t: tq, D, fps, seed: SEED, layout: LAYOUT, pal: ST.pal, cue: CUE,
+      frame: Math.round(tq * (ST.stepFps || fps)),
+      cy: LAYOUT === 'full' ? h * 0.42 : h * 0.5,
+      rng: BR.rng(SEED * 7919 + Math.round(tq * (ST.stepFps || fps))),
+    };
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    if (!px) {
+      BR.frame(ST, ctx, S, CUE);
+    } else {
+      const [sc, sctx] = BR.scratch('pixel', w, h);
+      sctx.imageSmoothingEnabled = false;
+      BR.frame(ST, sctx, S, CUE);
+      if (ST.quantize) ST.quantize(sctx, S);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(sc, 0, 0, W, H);
+      if (ST.postFull) ST.postFull(ctx, { ...S, W, H, u: Math.min(W, H) / 100 });
+    }
+    if (LAYOUT === 'pip') { // rounded card
+      ctx.save(); ctx.globalCompositeOperation = 'destination-in';
+      BR.roundRect(ctx, 0, 0, W, H, Math.min(W, H) * 0.07); ctx.fill(); ctx.restore();
+    }
+  }
+
+
+  window.setup = setup;
+  window.draw = draw;
+  window.grab = (type = 'image/png', q = 0.92) => cv.toDataURL(type, q);
+  window.styles = () => Object.values(BR.STYLES).map(s => ({ id: s.id, name: s.name }));
+
+  // ---- preview mode: broll.html?preview=<style>&w=540&h=480&layout=split
+  const qs = new URLSearchParams(location.search);
+  const DEMO = [
+    { template: 'stat', value: '73%', title: 'of viewers watch without sound', icon: 'volume-x' },
+    { template: 'compare', title: 'Which pays more?', left: { label: 'Salary', icon: 'briefcase' }, right: { label: 'Business', icon: 'rocket' }, winner: 'right' },
+    { template: 'steps', title: 'The method', items: [{ label: 'Hook', icon: 'magnet' }, { label: 'Story', icon: 'book-open' }, { label: 'Offer', icon: 'gift' }] },
+    { template: 'concept', title: 'Compound interest', subtitle: 'money that makes money', icon: 'piggy-bank' },
+    { template: 'trend', direction: 'up', value: '10x', title: 'growth in 12 months' },
+    { template: 'keyword', title: 'Consistency', icon: 'flame' },
+  ];
+  // Embedding UIs can play any cue: iframe.contentWindow.postMessage({type:'broll-play', style, cue, layout, w, h}, '*')
+  let playing = null;
+  window.addEventListener('message', e => {
+    const m = e.data || {};
+    if (m.type !== 'broll-play') return;
+    document.body.classList.add('preview');
+    const dur = Math.max(1, (m.cue.end ?? 3) - (m.cue.start ?? 0));
+    setup({ style: m.style, W: m.w || 540, H: m.h || 480, layout: m.layout || 'split', cue: { ...m.cue, start: 0, end: dur }, seed: 1 });
+    const t0 = performance.now(), id = Symbol(); playing = id;
+    (function loop(now) { if (playing !== id) return; const t = ((now - t0) / 1000) % (dur + 0.4); draw(Math.min(t, dur - 0.001)); requestAnimationFrame(loop); })(t0);
+  });
+  fontsReady.then(() => {
+    window.READY = true;
+    if (!qs.get('preview')) return;
+    document.body.classList.add('preview');
+    const style = qs.get('preview');
+    let i = +(qs.get('cue') || 0);
+    const only = qs.has('cue');
+    const dur = 3.4;
+    const start = () => setup({ style, W: +(qs.get('w') || 540), H: +(qs.get('h') || 480), layout: qs.get('layout') || 'split', cue: { ...DEMO[i % DEMO.length], start: 0, end: dur }, seed: i + 1 });
+    start();
+    let t0 = performance.now();
+    (function loop(now) {
+      let t = (now - t0) / 1000;
+      if (t > dur + 0.25) { if (!only) i++; start(); t0 = now; t = 0; }
+      draw(Math.min(t, dur - 0.001));
+      requestAnimationFrame(loop);
+    })(t0);
+  });
+})();
+</script>
+</body>
+</html>

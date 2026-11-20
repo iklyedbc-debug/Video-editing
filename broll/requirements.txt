@@ -1,0 +1,8 @@
+# Core: numpy only. System: node 20+ (with playwright + chromium), ffmpeg.
+numpy>=1.26
+# AI planner (recommended; falls back to a rule-based planner without it)
+anthropic>=0.70
+# Optional
+faster-whisper>=1.0     # only if your pipeline has no word timings yet
+fastapi>=0.110          # only for broll_studio.api
+uvicorn>=0.29
